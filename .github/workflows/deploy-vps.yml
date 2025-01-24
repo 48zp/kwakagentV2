@@ -26,12 +26,12 @@ jobs:
       # Build Docker image
       - name: Build Docker image
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/kwakagent42:latest .
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/kwakagent42v2:latest .
 
       # Push Docker image to Docker Hub
       - name: Push Docker image
         run: |
-          docker push ${{ secrets.DOCKER_USERNAME }}/kwakagent42:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/kwakagent42v2:latest
 
       # Set up SSH key for remote access
       - name: Set up SSH
@@ -44,15 +44,15 @@ jobs:
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/id_rsa
           chmod 600 /tmp/id_rsa
-          scp -o StrictHostKeyChecking=no -i /tmp/id_rsa ./docker-compose.yml debian@${{ secrets.VPS_IP }}:/home/debian/kwakagent42/
+          scp -o StrictHostKeyChecking=no -i /tmp/id_rsa ./docker-compose.yml debian@${{ secrets.VPS_IP }}:/home/debian/kwakagent42v2/
 
       - name: Deploy on VPS
         run: |
           # Pull the latest Docker image from Docker Hub
-          ssh -o StrictHostKeyChecking=no debian@${{ secrets.VPS_IP }} "cd /home/debian/kwakagent42 && docker-compose pull"
+          ssh -o StrictHostKeyChecking=no debian@${{ secrets.VPS_IP }} "cd /home/debian/kwakagent42v2 && docker-compose pull"
           
-          # Stop kwakagent42 service only
-          ssh -o StrictHostKeyChecking=no debian@${{ secrets.VPS_IP }} "cd /home/debian/kwakagent42 && docker-compose stop kwakagent42"
+          # Stop kwakagent42v2 service only
+          ssh -o StrictHostKeyChecking=no debian@${{ secrets.VPS_IP }} "cd /home/debian/kwakagent42v2 && docker-compose stop kwakagent42v2"
           
-          # Start the updated kwakagent42 service using the new image
-          ssh -o StrictHostKeyChecking=no debian@${{ secrets.VPS_IP }} "cd /home/debian/kwakagent42 && docker-compose up --build -d kwakagent42"
+          # Start the updated kwakagent42v2 service using the new image
+          ssh -o StrictHostKeyChecking=no debian@${{ secrets.VPS_IP }} "cd /home/debian/kwakagent42v2 && docker-compose up --build -d kwakagent42v2"
