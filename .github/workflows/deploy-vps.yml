@@ -44,7 +44,7 @@ jobs:
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/id_rsa
           chmod 600 /tmp/id_rsa
-          scp -o StrictHostKeyChecking=no -i /tmp/id_rsa ./docker-compose.yml debian@${{ secrets.VPS_IP }}:/home/debian/kwakagent42v2/
+          scp -o StrictHostKeyChecking=no -i /tmp/id_rsa ./docker-compose.yaml debian@${{ secrets.VPS_IP }}:/home/debian/kwakagent42v2/
 
       - name: Deploy on VPS
         run: |
