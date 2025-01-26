@@ -62,3 +62,5 @@ eliza.manifest
 eliza.manifest.sgx
 eliza.sig
 .envTOKEEP
+update_kwakagent42v2.bash
+.kwakagentwallet
