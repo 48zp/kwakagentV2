@@ -12,7 +12,7 @@ RUN npm install -g pnpm@9.4.0 && \
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Set the working directory
-WORKDIR /app
+WORKDIR /usr/src/kwakagent42v2
 
 # Copy package.json and other configuration files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc turbo.json ./
@@ -38,18 +38,19 @@ RUN npm install -g pnpm@9.4.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Set the working directory
+WORKDIR /usr/src/kwakagent42v2
 
 # Copy built artifacts and production dependencies from the builder stage
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/pnpm-workspace.yaml ./
-COPY --from=builder /app/.npmrc ./
-COPY --from=builder /app/turbo.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/agent ./agent
-COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/characters ./characters
+COPY --from=builder /usr/src/kwakagent42v2/package.json ./
+COPY --from=builder /usr/src/kwakagent42v2/pnpm-workspace.yaml ./
+COPY --from=builder /usr/src/kwakagent42v2/.npmrc ./
+COPY --from=builder /usr/src/kwakagent42v2/turbo.json ./
+COPY --from=builder /usr/src/kwakagent42v2/node_modules ./node_modules
+COPY --from=builder /usr/src/kwakagent42v2/agent ./agent
+COPY --from=builder /usr/src/kwakagent42v2/packages ./packages
+COPY --from=builder /usr/src/kwakagent42v2/scripts ./scripts
+COPY --from=builder /usr/src/kwakagent42v2/characters ./characters
 
 # Set the command to run the application
 CMD ["pnpm", "start"]
