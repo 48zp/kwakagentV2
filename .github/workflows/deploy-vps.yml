@@ -3,10 +3,12 @@ name: Deploy Kwak Agent 42
 on:
   push:
     branches:
-      - kwakagent
+      # - kwakagent
+      - none
   pull_request:
     branches:
-      - kwakagent
+      # - kwakagent
+      - none
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
