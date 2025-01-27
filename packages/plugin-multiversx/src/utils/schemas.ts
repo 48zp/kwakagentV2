@@ -30,3 +30,8 @@ export const swapSchema = z.object({
     amountIn: z.string().min(1, { message: "Amount is required." }),
     tokenOut: z.string().min(1, { message: "Second token is required." }),
 });
+
+export const pairSchema = z.object({
+    firstTokenID: z.string().min(1, { message: "Token A is required." }),
+    secondTokenID: z.string().min(1, { message: "Token B is required." }),
+});
