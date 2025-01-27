@@ -17,10 +17,10 @@ import { MongoDBDatabaseAdapter } from "@elizaos/adapter-mongodb"
 import { FarcasterClientInterface } from "@elizaos/client-farcaster"
 import { OmniflixPlugin } from "@elizaos/plugin-omniflix"
 import { JeeterClientInterface } from "@elizaos/client-simsai"
-
+import { XmtpClientInterface } from "@elizaos/client-xmtp";
 import { DirectClient } from "@elizaos/client-direct"
 import { agentKitPlugin } from "@elizaos/plugin-agentkit"
-
+import { gelatoPlugin } from "@elizaos/plugin-gelato";
 import { PrimusAdapter } from "@elizaos/plugin-primus"
 import { lightningPlugin } from "@elizaos/plugin-lightning"
 import { elizaCodeinPlugin, onchainJson } from "@elizaos/plugin-iq6900"
@@ -145,7 +145,8 @@ import { ankrPlugin } from "@elizaos/plugin-ankr";
 import { formPlugin } from "@elizaos/plugin-form";
 import { MongoClient } from "mongodb";
 import { quickIntelPlugin } from "@elizaos/plugin-quick-intel"
-
+import { btcfunPlugin } from "@elizaos/plugin-btcfun"
+import { trikonPlugin } from "@elizaos/plugin-trikon"
 const __filename = fileURLToPath(import.meta.url) // get the resolved path to the file
 const __dirname = path.dirname(__filename) // get the name of the directory
 
@@ -627,6 +628,11 @@ export async function initializeClients(character: Character, runtime: IAgentRun
 		if (autoClient) clients.auto = autoClient
 	}
 
+	if (clientTypes.includes(Clients.XMTP)) {
+        const xmtpClient = await XmtpClientInterface.start(runtime);
+        if (xmtpClient) clients.xmtp = xmtpClient;
+    }
+
 	if (clientTypes.includes(Clients.DISCORD)) {
 		const discordClient = await DiscordClientInterface.start(runtime)
 		if (discordClient) clients.discord = discordClient
@@ -905,6 +911,9 @@ export async function createAgent(character: Character, db: IDatabaseAdapter, ca
 			getSecret(character, "ANKR_WALLET") ? ankrPlugin : null,
 			getSecret(character, "DCAP_EVM_PRIVATE_KEY") && getSecret(character, "DCAP_MODE") ? dcapPlugin : null,
 			getSecret(character, "QUICKINTEL_API_KEY") ? quickIntelPlugin : null,
+			getSecret(character, "GELATO_RELAY_API_KEY") ? gelatoPlugin : null,
+			getSecret(character, "BTC_PRIVATE_KEY_WIF") && getSecret(character, "BTC_FUN_API_URL") ? btcfunPlugin : null,
+			getSecret(character, "TRIKON_WALLET_ADDRESS") ? trikonPlugin : null,
 		].flat().filter(Boolean),
 		providers: [],
 		managers: [],
