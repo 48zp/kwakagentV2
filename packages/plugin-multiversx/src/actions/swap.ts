@@ -28,7 +28,6 @@ import { getToken } from "../utils/getToken";
 import { filteredTokensQuery } from "../graphql/tokensQuery";
 import { isUserAuthorized } from "../utils/accessTokenManagement";
 
-
 type SwapResultType = {
     swap: {
         noAuthTransactions: {
@@ -75,7 +74,7 @@ export default {
     name: "SWAP",
     similes: ["SWAP_TOKEN", "SWAP_TOKENS"],
     validate: async (runtime: IAgentRuntime, message: Memory) => {
-        console.log("Validating config for user:", message.userId);
+        elizaLogger.log("Validating config for user:", message.userId);
         await validateMultiversxConfig(runtime);
         return true;
     },
@@ -85,25 +84,25 @@ export default {
         message: Memory,
         state: State,
         _options: { [key: string]: unknown },
-        callback?: HandlerCallback,
+        callback?: HandlerCallback
     ) => {
         elizaLogger.log("Starting SWAP handler...");
 
-        console.log("Handler initialized. Checking user authorization...");
+        elizaLogger.log("Handler initialized. Checking user authorization...");
 
-                if (!isUserAuthorized(message.userId, runtime)) {
-                    console.error(
-                        "Unauthorized user attempted to swap:",
-                        message.userId
-                    );
-                    if (callback) {
-                        callback({
-                            text: "You do not have permission to swap.",
-                            content: { error: "Unauthorized user" },
-                        });
-                    }
-                    return false;
-                }
+        if (!isUserAuthorized(message.userId, runtime)) {
+            elizaLogger.error(
+                "Unauthorized user attempted to swap:",
+                message.userId
+            );
+            if (callback) {
+                callback({
+                    text: "You do not have permission to swap.",
+                    content: { error: "Unauthorized user" },
+                });
+            }
+            return false;
+        }
 
         // Initialize or update state
         if (!state) {
@@ -135,7 +134,7 @@ export default {
 
         // Validate transfer content
         if (!isSwapContent) {
-            console.error("Invalid content for SWAP action.");
+            elizaLogger.error("Invalid content for SWAP action.");
 
             callback?.({
                 text: "Unable to process swap request. Invalid content provided.",
@@ -153,7 +152,7 @@ export default {
             const isEGLD = swapContent.tokenIn.toLowerCase() === "egld";
 
             const hasEgldBalance = await walletProvider.hasEgldBalance(
-                isEGLD ? swapContent.amountIn : undefined,
+                isEGLD ? swapContent.amountIn : undefined
             );
 
             if (!hasEgldBalance) {
@@ -172,7 +171,7 @@ export default {
 
             const graphqlProvider = new GraphqlProvider(
                 networkConfig.graphURL,
-                { Authorization: `Bearer ${accessToken}` },
+                { Authorization: `Bearer ${accessToken}` }
             );
 
             let tokenData: FungibleTokenOfAccountOnNetwork = null;
@@ -235,7 +234,7 @@ export default {
 
             const { swap } = await graphqlProvider.query<SwapResultType>(
                 swapQuery,
-                variables,
+                variables
             );
 
             if (!swap.noAuthTransactions) {
@@ -247,11 +246,11 @@ export default {
                     const txToBroadcast = { ...transaction };
                     txToBroadcast.sender = address;
                     txToBroadcast.data = TransactionPayload.fromEncoded(
-                        transaction.data as unknown as string,
+                        transaction.data as unknown as string
                     );
 
                     const account = await walletProvider.getAccount(
-                        walletProvider.getAddress(),
+                        walletProvider.getAddress()
                     );
                     txToBroadcast.nonce = account.nonce;
 
@@ -261,7 +260,7 @@ export default {
 
                     const txHash = await walletProvider.sendTransaction(tx);
                     return walletProvider.getTransactionURL(txHash); // Return the transaction URL
-                }),
+                })
             );
 
             const transactionURLs = txURLs.join(",");
@@ -270,7 +269,7 @@ export default {
             });
             return true;
         } catch (error) {
-            console.error("Error during token swap:", error);
+            elizaLogger.error("Error during token swap:", error);
             callback?.({
                 text: "Could not execute the swap.",
                 content: { error: error.message },
