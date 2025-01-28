@@ -35,3 +35,15 @@ export const pairSchema = z.object({
     firstTokenID: z.string().min(1, { message: "Token A is required." }),
     secondTokenID: z.string().min(1, { message: "Token B is required." }),
 });
+
+export const tokensDataSchema = z.object({
+    tokens: z.array(
+        z.object({
+            identifier: z
+                .string()
+                .min(1, { message: "Token identifier is required." }),
+            balance: z.string().min(1, { message: "Balance is required." }),
+        })
+    ),
+});
+
