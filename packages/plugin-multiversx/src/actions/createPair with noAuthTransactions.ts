@@ -18,8 +18,27 @@ import { pairSchema } from "../utils/schemas";
 import { MVX_NETWORK_CONFIG } from "../constants";
 import { createPairQuery } from "../graphql/createPairQuery";
 import { NativeAuthProvider } from "../providers/nativeAuth";
+import {
+    Transaction,
+    TransactionPayload,
+} from "@multiversx/sdk-core/out";
 import { isUserAuthorized } from "../utils/accessTokenManagement";
-import { Transaction, TransactionPayload } from "@multiversx/sdk-core";
+
+type PairResultType = {
+    createPair: {
+        noAuthTransactions: {
+            value: string;
+            receiver: string;
+            gasPrice: bigint;
+            gasLimit: bigint;
+            data: TransactionPayload;
+            chainID: string;
+            version: number;
+            sender: string;
+            nonce: number;
+        }[];
+    };
+};
 
 export interface ICreatePairContent extends Content {
     firstTokenID: string;
@@ -32,7 +51,7 @@ Example response:
 \`\`\`json
 {
     "firstTokenID": "EGLD",
-    "secondTokenID": "USDC"
+    "secondTokenID": "USDC",
 }
 \`\`\`
 
@@ -62,7 +81,6 @@ export default {
     ) => {
         elizaLogger.log("Starting CREATE_PAIR handler...");
 
-        // Check user authorization
         if (!isUserAuthorized(message.userId, runtime)) {
             elizaLogger.error(
                 "Unauthorized user attempted to create a pair:",
@@ -77,14 +95,12 @@ export default {
             return false;
         }
 
-        // Compose or update state
         if (!state) {
             state = (await runtime.composeState(message)) as State;
         } else {
             state = await runtime.updateRecentMessageState(state);
         }
 
-        // Generate pair context
         const pairContext = composeContext({
             state,
             template: pairTemplate,
@@ -99,13 +115,13 @@ export default {
 
         const pairContent = content.object as ICreatePairContent;
 
-        // Validate pair content
-        if (
-            !pairContent.firstTokenID ||
-            !pairContent.secondTokenID ||
-            typeof pairContent.firstTokenID !== "string" ||
-            typeof pairContent.secondTokenID !== "string"
-        ) {
+        const isPairContent =
+            typeof pairContent.firstTokenID === "string" &&
+            typeof pairContent.secondTokenID === "string";
+
+        elizaLogger.log("pairContent:", pairContent);
+
+        if (!isPairContent) {
             elizaLogger.error("Invalid content for CREATE_PAIR action.");
 
             callback?.({
@@ -117,93 +133,123 @@ export default {
         }
 
         try {
-            // Retrieve settings and initialize providers
+            // Retrieve the private key and network configuration settings
             const privateKey = runtime.getSetting("MVX_PRIVATE_KEY");
             const network = runtime.getSetting("MVX_NETWORK");
             const networkConfig = MVX_NETWORK_CONFIG[network];
 
+            // Initialize the wallet provider with the private key and network configuration
             const walletProvider = new WalletProvider(privateKey, network);
+
             const config = {
                 origin: "https://devnet.xexchange.com",
                 apiUrl: networkConfig.apiURL,
             };
 
+            // Initialize the NativeAuthProvider with the config
             const nativeAuthProvider = new NativeAuthProvider(config);
+
+            // Initialize the client for native authentication
             await nativeAuthProvider.initializeClient();
 
+            // Retrieve the address from the wallet provider
             const address = walletProvider.getAddress().toBech32();
+
+            // Get the access token for authentication
             const accessToken =
                 await nativeAuthProvider.getAccessToken(walletProvider);
 
+            // Get the accessToken for debugging
+            // console.log("Authorization Token:", accessToken);
+
+            // Initialize the GraphQL provider with the access token for authorization
             const graphqlProvider = new GraphqlProvider(
                 networkConfig.graphURL,
                 { Authorization: `Bearer ${accessToken}` }
             );
 
-            // Fetch token data
-            const tokenAData = await walletProvider.getTokenData(
+            // Fetch token data for firstTokenID and secondTokenID from the wallet
+            let tokenAData = null;
+            tokenAData = await walletProvider.getTokenData(
                 pairContent.firstTokenID
             );
-            const tokenBData = await walletProvider.getTokenData(
+            let tokenBData = null;
+            tokenBData = await walletProvider.getTokenData(
                 pairContent.secondTokenID
             );
 
-            if (!tokenAData?.identifier || !tokenBData?.identifier) {
-                throw new Error("Invalid token IDs provided.");
+            // Validate the token information to ensure the identifiers are valid
+            if (!tokenAData || !tokenAData.identifier) {
+                throw new Error(
+                    `Invalid firstTokenID identifier for ${pairContent.firstTokenID}`
+                );
+            }
+            if (!tokenBData || !tokenBData.identifier) {
+                throw new Error(
+                    `Invalid secondTokenID identifier for ${pairContent.secondTokenID}`
+                );
             }
 
-            // Prepare variables and execute the GraphQL query
+            // Prepare the variables for the GraphQL query to create the pair
             const variables = {
                 firstTokenID: tokenAData.identifier,
                 secondTokenID: tokenBData.identifier,
             };
 
-            const { createPair } = await graphqlProvider.query<any>(
+            // Execute the GraphQL query to create the pair
+            const { createPair } = await graphqlProvider.query<PairResultType>(
                 createPairQuery,
                 variables
             );
 
-            if (!createPair) {
-                throw new Error(
-                    "Pair creation failed. No response from GraphQL."
-                );
+            // Check if the pair creation returned valid transactions
+            if (!createPair.noAuthTransactions) {
+                throw new Error("No route found for creating pair");
             }
 
-            // Verify full GraphQL answer
-            console.log("createPair GraphQL response:", createPair);
+            // Process each transaction in the pair creation response
+            const txURLs = await Promise.all(
+                createPair.noAuthTransactions.map(async (transaction) => {
+                    const txToBroadcast = { ...transaction };
+                    txToBroadcast.sender = address;
+                    txToBroadcast.data = TransactionPayload.fromEncoded(
+                        transaction.data as unknown as string
+                    );
 
-            // Prepare and send the transaction
-            const txToBroadcast = {
-                sender: address,
-                data: TransactionPayload.fromEncoded(createPair.data),
-                nonce: await walletProvider
-                    .getAccount(walletProvider.getAddress())
-                    .then((account) => account.nonce),
-                gasLimit: createPair.gasLimit,
-                receiver: createPair.receiver,
-                chainID: createPair.chainID
-            };
+                    // Get the account data and set the transaction nonce
+                    const account = await walletProvider.getAccount(
+                        walletProvider.getAddress()
+                    );
+                    txToBroadcast.nonce = account.nonce;
 
-            const tx = new Transaction(txToBroadcast);
-            const signature = await walletProvider.signTransaction(tx);
-            tx.applySignature(signature);
+                    // Create a new transaction object and sign it
+                    const tx = new Transaction(txToBroadcast);
+                    const signature = await walletProvider.signTransaction(tx);
+                    tx.applySignature(signature);
 
-            const txHash = await walletProvider.sendTransaction(tx);
-            const txURL = walletProvider.getTransactionURL(txHash); // Transaction URL
+                    // Send the transaction and get the transaction hash
+                    const txHash = await walletProvider.sendTransaction(tx);
 
+                    // Return the URL to view the transaction
+                    return walletProvider.getTransactionURL(txHash);
+                })
+            );
+
+            // Join the transaction URLs into a single string
+            const transactionURLs = txURLs.join(",");
+
+            // Call the callback with the success message and transaction URLs
             callback?.({
-                text: `Transaction sent successfully! You can view it here: ${txURL}.`,
+                text: `Transaction(s) sent successfully! You can view them here: ${transactionURLs}.`,
             });
 
             return true;
         } catch (error) {
-            elizaLogger.error("Error during pair creation:", error.message);
-            console.log("Full error:", error);
-
-            callback?.({
-                text: "An error occurred while creating the token pair.",
-                content: { error: error.message },
-            });
+            elizaLogger.error(
+                    "Error during pair creation:",
+                    JSON.stringify(error.message, null, 2)
+                );
+            console.log("Full error:", error)
 
             return false;
         }
@@ -214,13 +260,13 @@ export default {
             {
                 user: "{{user1}}",
                 content: {
-                    text: "Create a pair with EGLD and USDC",
+                    text: "Create a pair with 1 EGLD and 100 USDC",
                 },
             },
             {
                 user: "{{agent}}",
                 content: {
-                    text: "Creating a pair with EGLD and USDC...",
+                    text: "Creating a pair with 1 EGLD and 100 USDC...",
                 },
             },
         ],
