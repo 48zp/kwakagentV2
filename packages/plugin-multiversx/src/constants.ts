@@ -5,17 +5,20 @@ export const MVX_NETWORK_CONFIG = {
         apiURL: "https://api.multiversx.com", // Mainnet API URL
         explorerURL: "https://explorer.multiversx.com",
         graphURL: "https://internal-graph.xexchange.com/graphql",
+        wrappedEgldIdentifier: "WEGLD-bd4d79",
     },
     devnet: {
         chainID: "D", // Devnet chain ID
         apiURL: "https://devnet-api.multiversx.com", // Devnet API URL,
         explorerURL: "https://devnet-explorer.multiversx.com",
         graphURL: "https://devnet-graph.xexchange.com/graphql",
+        wrappedEgldIdentifier: "WEGLD-a28c59",
     },
     testnet: {
         chainID: "T", // Testnet chain ID
         apiURL: "https://testnet-api.multiversx.com", // Testnet API URL
         explorerURL: "https://testnet-explorer.multiversx.com",
         graphURL: "https://testnet-graph.xexchange.com/graphql",
+        wrappedEgldIdentifier: "WEGLD-abc123",
     },
 };
