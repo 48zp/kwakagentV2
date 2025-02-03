@@ -169,3 +169,24 @@ const setSwapEnabledByUserString = `
 export const setSwapEnabledByUserQuery = gql`
     ${setSwapEnabledByUserString}
 `;
+
+// Wrap EGLD
+
+const wrapEgldString = `
+  query swapPackageWrapEgld($wrappingAmount: String!) {
+    wrapEgld(amount: $wrappingAmount) {
+      value
+      receiver
+      gasPrice
+      gasLimit
+      data
+      chainID
+      version
+      __typename
+    }
+  }
+`;
+
+export const wrapEgldQuery = gql`
+    ${wrapEgldString}
+`;

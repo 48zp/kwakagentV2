@@ -26,6 +26,7 @@ import {
     lockTokensQuery,
     createPoolUserLpsQuery,
     setSwapEnabledByUserQuery,
+    wrapEgldQuery,
 } from "../graphql/createLiquidityPoolQueries";
 import { NativeAuthProvider } from "../providers/nativeAuth";
 import { isUserAuthorized } from "../utils/accessTokenManagement";
@@ -203,7 +204,7 @@ export default {
                         return token.identifier;
                     } else {
                         elizaLogger.error(
-                            "Token not found for ticker:",
+                            "Identifier not found for ticker:",
                             ticker
                         );
                         return null;
@@ -218,28 +219,23 @@ export default {
                 ticker: string
             ): Promise<string | null> {
                 try {
-                    const tokenIdentifier = await findTokenIdentifier(ticker);
-
-                    if (!tokenIdentifier) {
-                        elizaLogger.error(
-                            "Token identifier not found for ticker:",
-                            ticker
-                        );
-                        return null;
-                    }
-
                     const tokenData = await walletProvider.getTokensData();
 
+                    const normalizedTicker = normalizeIdentifier(ticker);
+
                     const token = tokenData.find(
-                        (token) => token.identifier === tokenIdentifier
+                        (token) =>
+                            token.identifier &&
+                            normalizeIdentifier(token.identifier) ===
+                                normalizedTicker
                     );
 
-                    if (token && token.balance) {
+                    if (token) {
                         return token.balance.toString();
                     } else {
                         elizaLogger.error(
-                            "Balance not found for token:",
-                            tokenIdentifier
+                            "Balance not found for ticker:",
+                            ticker
                         );
                         return null;
                     }
@@ -272,45 +268,190 @@ export default {
             }
 
             const address = walletProvider.getAddress().toBech32();
+            const quoteTokenIdentifier = networkConfig.wrappedEgldIdentifier;
+            const baseTokenIdentifier = await findTokenIdentifier(baseToken);
 
-            const hasEgldBalance =
-                await walletProvider.hasEgldBalance(quoteAmount);
+            let tokenData: FungibleTokenOfAccountOnNetwork = null;
+            let rawBalance;
+            let rawBalanceNum;
 
-            if (!hasEgldBalance) {
-                throw new Error("❌ Insufficient EGLD balance.");
+            try {
+                // Check token balance
+
+                tokenData =
+                    await walletProvider.getTokenData(baseTokenIdentifier);
+
+                rawBalance = getRawAmount({
+                    amount: tokenData.balance.toString(),
+                    decimals: tokenData.rawResponse.decimals,
+                });
+
+                rawBalanceNum = Number(rawBalance);
+
+                if (rawBalanceNum < Number(baseAmount)) {
+                    throw new Error(
+                        `❌ Insufficient ${baseTokenIdentifier} balance`
+                    );
+                }
+
+                // Check WEGLD balance
+
+                try {
+                    tokenData =
+                        await walletProvider.getTokenData(quoteTokenIdentifier);
+
+                    rawBalanceNum = getRawAmount({
+                        amount: tokenData.balance.toString(),
+                        decimals: tokenData.rawResponse.decimals,
+                    });
+
+                    rawBalanceNum = Number(rawBalanceNum);
+                } catch (error) {
+                    if (
+                        error.message.includes(
+                            "Token for given account not found"
+                        )
+                    ) {
+                        elizaLogger.warn(
+                            `Token ${quoteTokenIdentifier} not found, assuming balance = 0`
+                        );
+                        rawBalanceNum = 0;
+                    } else {
+                        throw error;
+                    }
+                }
+
+                if (rawBalanceNum < Number(quoteAmount)) {
+                    elizaLogger.log(
+                        "❌ Insufficient Wrapped EGLD balance. Checking EGLD..."
+                    );
+
+                    // Check EGLD balance before wrapping
+
+                    const missingAmount = String(Number(quoteAmount) - rawBalanceNum);
+
+                    const hasEgldBalance =
+                        await walletProvider.hasEgldBalance(missingAmount);
+                    if (!hasEgldBalance) {
+                        throw new Error("❌ Insufficient EGLD balance.");
+                    }
+
+                    const rawAmountToWrap = Number(missingAmount) * 10 ** 18;
+
+                    if (debugModeOn) {
+                        elizaLogger.log("🔵 Sending GraphQL request:");
+                        elizaLogger.log("Query:", wrapEgldQuery);
+                        elizaLogger.log(
+                            "Variables:",
+                            JSON.stringify(
+                                { wrappingAmount: String(rawAmountToWrap) },
+                                null,
+                                2
+                            )
+                        );
+                    }
+
+                    const wrapEgldresponse = await graphqlProvider.query<any>(
+                        wrapEgldQuery,
+                        {
+                            wrappingAmount: String(rawAmountToWrap),
+                        }
+                    );
+
+                    if (debugModeOn) {
+                        elizaLogger.log("🟢 Received GraphQL response:");
+                        elizaLogger.log(
+                            JSON.stringify(wrapEgldresponse, null, 2)
+                        );
+                    }
+
+                    if (!wrapEgldresponse) {
+                        throw new Error(
+                            "❌ Wrapping EGLD failed. No response from GraphQL."
+                        );
+                    }
+
+                    if (wrapEgldresponse.errors) {
+                        elizaLogger.error(
+                            "❌ GraphQL Errors:",
+                            JSON.stringify(wrapEgldresponse.errors, null, 2)
+                        );
+                        throw new Error("❌ GraphQL returned errors.");
+                    }
+
+                    const wrapEgld = wrapEgldresponse.wrapEgld;
+
+                    if (!wrapEgld) {
+                        throw new Error(
+                            "❌ Wrapping EGLD failed. Missing wrapEgld in response."
+                        );
+                    }
+
+                    // Prepare and send the transaction
+                    const wrapEgldTxToBroadcast = {
+                        sender: address,
+                        value: wrapEgld.value,
+                        data: TransactionPayload.fromEncoded(wrapEgld.data),
+                        nonce: await walletProvider
+                            .getAccount(walletProvider.getAddress())
+                            .then((account) => account.nonce),
+                        gasLimit: wrapEgld.gasLimit,
+                        receiver: wrapEgld.receiver,
+                        chainID: wrapEgld.chainID,
+                    };
+
+                    const wrapEgldTx = new Transaction(wrapEgldTxToBroadcast);
+                    const wrapEgldsignature =
+                        await walletProvider.signTransaction(wrapEgldTx);
+                    wrapEgldTx.applySignature(wrapEgldsignature);
+
+                    const wrapEgldTxHash =
+                        await walletProvider.sendTransaction(wrapEgldTx);
+                    const wrapEgldTxURL =
+                        walletProvider.getTransactionURL(wrapEgldTxHash);
+
+                    if (debugModeOn) {
+                        elizaLogger.log(
+                            "wrapEgld transaction sent successfully"
+                        );
+                        elizaLogger.log(`Transaction URL: ${wrapEgldTxURL}`);
+                    }
+
+                    const wrapEgldWatcher = new TransactionWatcher(
+                        apiNetworkProvider
+                    );
+                    const wrapEgldTransactionOnNetwork =
+                        await wrapEgldWatcher.awaitCompleted(wrapEgldTx);
+
+                    if (
+                        "status" in wrapEgldTransactionOnNetwork.status &&
+                        wrapEgldTransactionOnNetwork.status.status === "success"
+                    ) {
+                        if (debugModeOn) {
+                            elizaLogger.log("wrapEgld transaction success.");
+                        }
+                        callback?.({
+                            text: `EGLD wrapped successfully, creating pair..`,
+                        });
+                    } else {
+                        throw new Error("❌ wrapEgld transaction failed.");
+                    }
+                }
+            } catch (error) {
+                elizaLogger.error(
+                    "❌ Error during liquidity pool creation:",
+                    error.message
+                );
+                callback?.({
+                    text: `An error occurred while creating the liquidity pool: ${error.message}`,
+                });
+
+                return false;
             }
 
             // Step 1: Create Pair
 
-            let tokenData: FungibleTokenOfAccountOnNetwork = null;
-            let quoteTokenIdentifier: string | undefined;
-            let baseTokenIdentifier: string | undefined;
-
             try {
-                if (baseToken.toLowerCase() !== "egld") {
-                    baseTokenIdentifier = await findTokenIdentifier(baseToken);
-
-                    if (!baseTokenIdentifier) {
-                        throw new Error("❌ Base token identifier not found");
-                    }
-
-                    tokenData =
-                        await walletProvider.getTokenData(baseTokenIdentifier);
-                    const rawBalance = getRawAmount({
-                        amount: tokenData.balance.toString(),
-                        decimals: tokenData.rawResponse.decimals,
-                    });
-                    const rawBalanceNum = Number(rawBalance);
-
-                    if (rawBalanceNum < Number(baseAmount)) {
-                        throw new Error("❌ Insufficient balance");
-                    }
-                } else {
-                    quoteTokenIdentifier = networkConfig.wrappedEgldIdentifier;
-                }
-
-                quoteTokenIdentifier = networkConfig.wrappedEgldIdentifier;
-
                 const createPairVariables = {
                     firstTokenID: baseTokenIdentifier,
                     secondTokenID: quoteTokenIdentifier,
@@ -388,15 +529,16 @@ export default {
                         text: `Step 1/6: Pair created successfully, issuing LP Token..`,
                     });
                 } else {
-                    callback?.({
-                        text: "An error occurred while creating the liquidity pool: : createPair transaction failed.",
-                    });
+                    throw new Error("❌ createPair transaction failed.");
                 }
             } catch (error) {
                 elizaLogger.error(
-                    "❌ Error during liquidity pool creation: createPair transaction failed.",
+                    "❌ Error during liquidity pool creation:",
                     error.message
                 );
+                callback?.({
+                    text: `An error occurred while creating the liquidity pool: ${error.message}`,
+                });
 
                 return false;
             }
@@ -547,15 +689,16 @@ export default {
                         text: `Step 2/6: LP Token issued successfully, setting Local Roles..`,
                     });
                 } else {
-                    callback?.({
-                        text: "An error occurred while creating the liquidity pool: : issueLpToken transaction failed.",
-                    });
+                    throw new Error("❌ issueLpToken transaction failed.");
                 }
             } catch (error) {
                 elizaLogger.error(
-                    "❌ Error during liquidity pool creation: issueLpToken transaction failed.",
+                    "❌ Error during liquidity pool creation:",
                     error.message
                 );
+                callback?.({
+                    text: `An error occurred while creating the liquidity pool: ${error.message}`,
+                });
 
                 return false;
             }
@@ -639,15 +782,16 @@ export default {
                         text: `Step 3/6: Local Roles set successfully, adding initial liquidity..`,
                     });
                 } else {
-                    callback?.({
-                        text: "An error occurred while creating the liquidity pool: : setLocalRoles transaction failed.",
-                    });
+                    throw new Error("❌ setLocalRoles transaction failed.");
                 }
             } catch (error) {
                 elizaLogger.error(
-                    "❌ Error during liquidity pool creation: setLocalRoles transaction failed.",
+                    "❌ Error during liquidity pool creation:",
                     error.message
                 );
+                callback?.({
+                    text: `An error occurred while creating the liquidity pool: ${error.message}`,
+                });
 
                 return false;
             }
@@ -795,15 +939,18 @@ export default {
                         text: `Step 4/6: Initial Liquidity added successfully, locking LP token..`,
                     });
                 } else {
-                    callback?.({
-                        text: "An error occurred while creating the liquidity pool: : addInitialLiquidity transaction failed.",
-                    });
+                    throw new Error(
+                        "❌ addInitialLiquidity transaction failed."
+                    );
                 }
             } catch (error) {
                 elizaLogger.error(
-                    "❌ Error during liquidity pool creation: addInitialLiquidity transaction failed.",
+                    "❌ Error during liquidity pool creation:",
                     error.message
                 );
+                callback?.({
+                    text: `An error occurred while creating the liquidity pool: ${error.message}`,
+                });
 
                 return false;
             }
@@ -896,15 +1043,16 @@ export default {
                         text: `Step 5/6: LP Token locked successfully, enabling swap..`,
                     });
                 } else {
-                    callback?.({
-                        text: "An error occurred while creating the liquidity pool: : lockTokens transaction failed.",
-                    });
+                    throw new Error("❌ lockTokens transaction failed.");
                 }
             } catch (error) {
                 elizaLogger.error(
-                    "❌ Error during liquidity pool creation: lockTokens transaction failed.",
+                    "❌ Error during liquidity pool creation:",
                     error.message
                 );
+                callback?.({
+                    text: `An error occurred while creating the liquidity pool: ${error.message}`,
+                });
 
                 return false;
             }
@@ -1063,15 +1211,18 @@ export default {
                         text: `Step 6/6: Swap enabled successfully. Your pool ${lpTokenTicker} is now ready.`,
                     });
                 } else {
-                    callback?.({
-                        text: "An error occurred while creating the liquidity pool: : setSwapEnabledByUser transaction failed.",
-                    });
+                    throw new Error(
+                        "❌ setSwapEnabledByUser transaction failed."
+                    );
                 }
             } catch (error) {
                 elizaLogger.error(
-                    "❌ Error during liquidity pool creation: setSwapEnabledByUser transaction failed.",
+                    "❌ Error during liquidity pool creation:",
                     error.message
                 );
+                callback?.({
+                    text: `An error occurred while creating the liquidity pool: ${error.message}`,
+                });
 
                 return false;
             }
